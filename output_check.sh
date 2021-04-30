@@ -1,5 +1,8 @@
 #!/bin/bash
 # Not part of my work (these tests are created by FIT BUT)
+# Edited: added exit code and colors to alerts
+
+exit_code=0
 
 ELF_h="^[0-9][0-9]*: Elf [0-9][0-9]*: taking holidays$"
 ELF_hv=0
@@ -29,63 +32,84 @@ S_chv=0
 while read line
 do
   if echo $line | grep "$ELF_h" >/dev/null; then
-  	ELF_hv=1
+    ELF_hv=1
   elif echo $line | grep "$ELF_s" >/dev/null; then
-  	ELF_sv=1
+    ELF_sv=1
   elif echo $line | grep "$ELF_n" >/dev/null; then
-  	ELF_nv=1
+    ELF_nv=1
   elif echo $line | grep "$ELF_g" >/dev/null; then
-  	ELF_gv=1
+    ELF_gv=1
   elif echo $line | grep "$RD_s" >/dev/null; then
-  	RD_sv=1
+    RD_sv=1
   elif echo $line | grep "$RD_r" >/dev/null; then
-  	RD_rv=1
+    RD_rv=1
   elif echo $line | grep "$RD_h" >/dev/null; then
-  	RD_hv=1
+    RD_hv=1
   elif echo $line | grep "$S_s" >/dev/null; then
-  	S_sv=1
+    S_sv=1
   elif echo $line | grep "$S_h" >/dev/null; then
-  	S_hv=1
+    S_hv=1
   elif echo $line | grep "$S_c" >/dev/null; then
-  	S_cv=1
+    S_cv=1
   elif echo $line | grep "$S_ch" >/dev/null; then
-  	S_chv=1
+    S_chv=1
   else
-  	echo "Line format error:" $line
+    printf "\e[91mLine format error:%s\e[39m\n" "$line"
+    exit_code=1
   fi
 done
 
 if [ ! X$ELF_hv = "X1" ]; then 
-	echo "WARNING: no elf taking holidays"
+  printf "\e[91mWARNING: no elf taking holidays\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$ELF_sv = "X1" ]; then 
-	echo "WARNING: no elf started"
+  printf "\e[91mWARNING: no elf started\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$ELF_nv = "X1" ]; then 
-	echo "WARNING: no elf need help"
+  printf "\e[91mWARNING: no elf need help\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$ELF_gv = "X1" ]; then 
-	echo "WARNING: no elf get help"
+  printf "\e[91mWARNING: no elf get help\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$RD_sv = "X1" ]; then 
-	echo "WARNING: no RD started"
+  printf "\e[91mWARNING: no RD started\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$RD_rv = "X1" ]; then 
-	echo "WARNING: no RD returned home"
+  printf "\e[91mWARNING: no RD returned home\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$RD_hv = "X1" ]; then 
-	echo "WARNING: no RD hitched"
+  printf "\e[91mWARNING: no RD hitched\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$S_sv = "X1" ]; then 
-	echo "WARNING: no SANTA going to sleep"
+  printf "\e[91mWARNING: no SANTA going to sleep\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$S_cv = "X1" ]; then 
-	echo "WARNING: no SANTA closing workshop"
+  printf "\e[91mWARNING: no SANTA closing workshop\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$S_hv = "X1" ]; then 
-	echo "WARNING: no SANTA helping elves"
+  printf "\e[91mWARNING: no SANTA helping elves\e[39m\n"
+  exit_code=1
 fi
 if [ ! X$S_chv = "X1" ]; then 
-	echo "WARNING: no Christmas started"
+  printf "\e[91mWARNING: no Christmas started\e[39m\n"
+  exit_code=1
 fi
 
+if [ $exit_code == 0 ]; then
+  printf "\e[92mTests have been successful\e[39m\n"
+
+  exit 0
+else
+  printf "\e[91mTests failed\e[39m\n"
+
+  exit 1
+fi
