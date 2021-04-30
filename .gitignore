@@ -4,3 +4,6 @@ cmake-build-debug/
 
 # Binaries
 proj2
+
+# Outputs
+proj2.out
