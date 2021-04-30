@@ -1,0 +1,13 @@
+name: general-tests
+on: [push]
+jobs:
+  cppcheck:
+    name: Cppcheck (static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+
+      - name: Run Cppcheck
+        uses: Bedzior/cppcheck-action@v2.0.0

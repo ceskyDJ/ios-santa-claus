@@ -1,0 +1,17 @@
+name: school-tests
+on: [push]
+jobs:
+  output-check:
+    name: Output check (validate program outputs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Build binary
+        run: make
+
+      - name: Run program (generate results into proj2.out)
+        run: ./proj2 5 4 100 100
+
+      - name: Run tests
+        run: cat ./proj2.out | ./output_check.sh
