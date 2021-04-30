@@ -15,12 +15,6 @@ CFLAGS=-std=gnu99 -Wall -Wextra -Werror -pedantic
 # make
 all: proj2
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-## ## ##
-## ## ##
-
 # Compiling programs composited of multiple modules
 proj2: proj2.c
 	$(CC) proj2.c -o proj2
