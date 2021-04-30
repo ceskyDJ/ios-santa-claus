@@ -1,0 +1,6 @@
+# IDE and CMake files
+.idea/
+cmake-build-debug/
+
+# Binaries
+proj2
