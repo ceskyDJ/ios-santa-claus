@@ -8,6 +8,7 @@
 #include <semaphore.h>
 #include <signal.h>
 #include <sys/shm.h>
+#include <sys/time.h>
 
 // No valid input
 #define BAD_INPUT -1
@@ -392,6 +393,25 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Notify about start working action
             fprintf(log_file, "%d: Elf %d: started\n", action_num, id);
 
+            // Prepare for randomization - construct seed
+            // Seed is constructed from PID of the child process and microseconds of the current time
+            struct timeval current_time;
+            gettimeofday(&current_time, NULL);
+            srand(getpid() + current_time.tv_usec);
+
+            // Simulate individual working for a pseudorandom time
+            int work_time = rand() % (configs->elf_work + 1);
+            usleep(work_time * 1000); // * 1000 => convert milliseconds to microseconds
+
+            // Critical section - getting action number
+            sem_wait(numbering_sem);
+            action_num = ++shared_data->process_num;
+            sem_post(numbering_sem);
+            // END of critical section
+
+            // Let know individual work is completed and elf need Santa's help
+            fprintf(log_file, "%d: Elf %d: need help\n", action_num, id);
+
             // Child process is done
             // Critical section - incrementing end processes number
             sem_wait(end_process_counting_sem);
@@ -442,8 +462,27 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Set identifier
             id = i + 1;
 
-            // Notify about start working action
+            // Notify about go to holiday action
             fprintf(log_file, "%d: RD %d: rstarted\n", action_num, id);
+
+            // Prepare for randomization - construct seed
+            // Seed is constructed from PID of the child process and microseconds of the current time
+            struct timeval current_time;
+            gettimeofday(&current_time, NULL);
+            srand(getpid() + current_time.tv_usec);
+
+            // Simulate holiday for a pseudorandom time
+            int holiday_time = (rand() + (configs->reindeer_holiday / 2)) % (configs->reindeer_holiday + 1);
+            usleep(holiday_time * 1000); // * 1000 => convert milliseconds to microseconds
+
+            // Critical section - getting action number
+            sem_wait(numbering_sem);
+            action_num = ++shared_data->process_num;
+            sem_post(numbering_sem);
+            // END of critical section
+
+            // Let know reindeer is back at home
+            fprintf(log_file, "%d: RD %d: return home\n", action_num, id);
 
             // Child process is done
             // Critical section - incrementing end processes number
