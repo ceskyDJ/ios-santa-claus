@@ -41,14 +41,14 @@ bool loadConfigurations(char **inputArgs);
 int main(int argc, char *argv[]) {
     // Program need 4 explicit arguments (+ 1 implicit): NE NR TE TR
     if (argc < 5) {
-        fprintf(stderr, "Too few input arguments\n");
+        printf("Too few input arguments\n");
 
         return 1;
     }
 
     // Load configurations from input arguments
     if (!loadConfigurations(argv)) {
-        fprintf(stderr, "Invalid input argument(s)\n");
+        printf( "Invalid input argument(s)\n");
 
         return 1;
     }
