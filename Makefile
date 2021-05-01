@@ -17,7 +17,7 @@ all: proj2
 
 # Compiling programs composited of multiple modules
 proj2: proj2.c
-	$(CC) proj2.c -o proj2
+	$(CC) proj2.c -o proj2 -pthread
 
 # make pack
 pack:

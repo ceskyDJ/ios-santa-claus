@@ -22,11 +22,19 @@ typedef struct configs {
 
 // Shared data between all processes
 typedef struct shared_data {
-    int process_num;    // Number of created (child) processes
+    int process_num;        // Number of created (child) processes
+    int ended_processes;    // Number of ended (done) child processes
 } shared_data_t;
 
 // ID for elves and reindeer
 int id;
+
+// Semaphore for creating barrier for main process - it must wait for every child process to complete
+sem_t *main_barrier_sem;
+// Semaphore for process process counting critical section (manipulating with ended_processes in shared_data)
+sem_t *end_process_counting_sem;
+// Semaphore for process numbering critical section (manipulating with process_num in shared_data)
+sem_t *numbering_sem;
 
 /**
  * Parses provided input argument
@@ -43,28 +51,42 @@ int parse_input_arg(char *input_arg, int min, int max);
  * @return true => success, false => problems with input arguments
  */
 bool load_configurations(configs_t *configs, char **input_args);
+
+/**
+ * Creates unnamed semaphore
+ * @param init_value Initial value of the semaphore
+ * @return Pointer to the created semaphore or NULL => memory error or init error
+ */
+sem_t *create_semaphore(int init_value);
+/**
+ * Destroys provided semaphore
+ * @param semaphore The semaphore for destroying
+ */
+void destroy_semaphore(sem_t *semaphore);
+
 /**
  * Creates Santa process
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(FILE *log_file);
+bool spawn_santa(FILE *log_file, int shared_mem_id);
 /**
  * Creates elf processes
- * @param elf_num Number of elves to create
- * @param elf_work Maximum time of elf's individual work
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_elves(int elf_num, int elf_work, FILE *log_file);
+bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id);
 /**
  * Creates reindeer processes
- * @param reindeer_num Number of reindeer to create
- * @param reindeer_holiday Maximum reindeer's holiday time
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_reindeer(int reindeer_num, int reindeer_holiday, FILE *log_file);
+bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id);
 
 /**
  * Program for simulating Santa Claus live
@@ -105,42 +127,105 @@ int main(int argc, char *argv[]) {
 
     // Prepare shared memory
     int shared_mem_id;
-    if ((shared_mem_id = shmget(IPC_PRIVATE, sizeof(shared_data_t), 0)) == -1) {
+    if ((shared_mem_id = shmget(IPC_PRIVATE, sizeof(shared_data_t), 0644 | IPC_CREAT)) == -1) {
         printf("Cannot get shared memory\n");
 
         fclose(log_file);
         return 1;
     }
 
+    // Init semaphore for process numbering
+    if ((numbering_sem = create_semaphore(1)) == NULL) {
+        printf("Cannot create numbering semaphore\n");
+
+        fclose(log_file);
+        return 1;
+    }
+
+    // Init semaphore for blocking main process until all child processes are done
+    if ((main_barrier_sem = create_semaphore(1)) == NULL) {
+        printf("Cannot create main barrier semaphore\n");
+
+        destroy_semaphore(numbering_sem);
+        fclose(log_file);
+        return 1;
+    }
+
+    // Init semaphore for counting ended processes
+    if ((end_process_counting_sem = create_semaphore(0)) == NULL) {
+        printf("Cannot create process counting semaphore\n");
+
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
+        fclose(log_file);
+        return 1;
+    }
+
     // Create needed processes
-    if (!spawn_santa(log_file)) {
+    if (!spawn_santa(log_file, shared_mem_id)) {
         printf("Cannot create process for Santa\n");
 
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
     }
-    if (!spawn_elves(configs.elf_num, configs.elf_work, log_file)) {
+    if (!spawn_elves(&configs, log_file, shared_mem_id)) {
         printf("Cannot create process for elf\n");
 
         // Terminate Santa process
         kill(-1, SIGKILL);
 
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
     }
-    if (!spawn_reindeer(configs.reindeer_num, configs.reindeer_holiday, log_file)) {
+    if (!spawn_reindeer(&configs, log_file, shared_mem_id)) {
         printf("Cannot create process for reindeer\n");
 
         // Terminate already created processes
         kill(-1, SIGKILL);
 
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
     }
 
+    // Attach shared memory
+    shared_data_t *shared_data;
+    if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
+        printf("Cannot attach shared memory\n");
+
+        // Terminate created processes
+        kill(-1, SIGKILL);
+
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
+        shmctl(shared_mem_id, IPC_RMID, 0);
+        fclose(log_file);
+        return 1;
+    }
+
+    // Main process can end only if all child processes have ended
+    if (shared_data->ended_processes == (1 + configs.elf_num + configs.reindeer_num)) {
+        sem_post(main_barrier_sem);
+    }
+
+    sem_wait(main_barrier_sem);
+    sem_post(main_barrier_sem);
+
+    destroy_semaphore(end_process_counting_sem);
+    destroy_semaphore(main_barrier_sem);
+    destroy_semaphore(numbering_sem);
     shmctl(shared_mem_id, IPC_RMID, 0);
     fclose(log_file);
     return 0;
@@ -199,11 +284,41 @@ bool load_configurations(configs_t *configs, char **input_args) {
 }
 
 /**
+ * Creates unnamed semaphore
+ * @param init_value Initial value of the semaphore
+ * @return Pointer to the created semaphore or NULL => memory error or init error
+ */
+sem_t *create_semaphore(int init_value) {
+    // Allocate memory used by semaphore
+    sem_t *semaphore;
+    if ((semaphore = malloc(sizeof(sem_t))) == NULL) {
+        return NULL;
+    }
+
+    // Initialize semaphore
+    if (sem_init(semaphore, 0, init_value) == -1) {
+        return NULL;
+    }
+
+    return semaphore;
+}
+
+/**
+ * Destroys provided semaphore
+ * @param semaphore The semaphore for destroying
+ */
+void destroy_semaphore(sem_t *semaphore) {
+    sem_destroy(semaphore);
+    free(semaphore);
+}
+
+/**
  * Creates Santa process
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(FILE *log_file) {
+bool spawn_santa(FILE *log_file, int shared_mem_id) {
     // Create a new (child) process by dividing the main process into two processes
     pid_t ppid = fork();
     if (ppid == -1) {
@@ -211,9 +326,29 @@ bool spawn_santa(FILE *log_file) {
         return false;
     } else if (ppid == 0) {
         // Process has been successfully created --> this is code for the new (child) process
-        fprintf(log_file, "A: Santa: going to sleep\n"); // TODO: Replace "A" with action number
+
+        // Attach shared memory
+        shared_data_t *shared_data;
+        if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
+            return false;
+        }
+
+        // Critical section - getting action number
+        sem_wait(numbering_sem);
+        int action_num = ++shared_data->process_num;
+        sem_post(numbering_sem);
+        // END of critical section
+
+        fprintf(log_file, "%d: Santa: going to sleep\n", action_num);
 
         // Child process is done
+        // Critical section - incrementing end processes number
+        sem_wait(end_process_counting_sem);
+        shared_data->ended_processes++;
+        shmdt(shared_data);
+        sem_post(end_process_counting_sem);
+        // END of critical section
+
         exit(0);
     } else {
         // Process has been successfully created --> this is code for original (main) process
@@ -224,15 +359,13 @@ bool spawn_santa(FILE *log_file) {
 
 /**
  * Creates elf processes
- * @param elf_num Number of elves to create
- * @param elf_work Maximum time of elf's individual work
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_elves(int elf_num, int elf_work, FILE *log_file) {
-    (void)elf_work; // TODO: remove, only for simulating some action with the parameter
-
-    for (int i = 0; i < elf_num; i++) {
+bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
+    for (int i = 0; i < configs->elf_num; i++) {
         // Create a new (child) process by dividing the main process into two processes
         pid_t ppid = fork();
         if (ppid == -1) {
@@ -241,13 +374,32 @@ bool spawn_elves(int elf_num, int elf_work, FILE *log_file) {
         } else if (ppid == 0) {
             // Process has been successfully created --> this is code for the new (child) process
 
+            // Attach shared memory
+            shared_data_t *shared_data;
+            if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
+                return false;
+            }
+
+            // Critical section - getting action number
+            sem_wait(numbering_sem);
+            int action_num = ++shared_data->process_num;
+            sem_post(numbering_sem);
+            // END of critical section
+
             // Set identifier
             id = i + 1;
 
             // Notify about start working action
-            fprintf(log_file, "A: Elf %d: started\n", id); // TODO: Replace "A" with action number
+            fprintf(log_file, "%d: Elf %d: started\n", action_num, id);
 
             // Child process is done
+            // Critical section - incrementing end processes number
+            sem_wait(end_process_counting_sem);
+            shared_data->ended_processes++;
+            shmdt(shared_data);
+            sem_post(end_process_counting_sem);
+            // END of critical section
+
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
@@ -259,15 +411,13 @@ bool spawn_elves(int elf_num, int elf_work, FILE *log_file) {
 
 /**
  * Creates reindeer processes
- * @param reindeer_num Number of reindeer to create
- * @param reindeer_holiday Maximum reindeer's holiday time
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
+ * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_reindeer(int reindeer_num, int reindeer_holiday, FILE *log_file) {
-    (void)reindeer_holiday; // TODO: remove, only for simulating some action with the parameter
-
-    for (int i = 0; i < reindeer_num; i++) {
+bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
+    for (int i = 0; i < configs->reindeer_num; i++) {
         // Create a new (child) process by dividing the main process into two processes
         pid_t ppid = fork();
         if (ppid == -1) {
@@ -276,13 +426,33 @@ bool spawn_reindeer(int reindeer_num, int reindeer_holiday, FILE *log_file) {
         } else if (ppid == 0) {
             // Process has been successfully created --> this is code for the new (child) process
 
+            // Attach shared memory
+            shared_data_t *shared_data;
+            if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
+                printf("%d\n", shared_mem_id);
+                return false;
+            }
+
+            // Critical section - getting action number
+            sem_wait(numbering_sem);
+            int action_num = ++shared_data->process_num;
+            sem_post(numbering_sem);
+            // END of critical section
+
             // Set identifier
             id = i + 1;
 
             // Notify about start working action
-            fprintf(log_file, "A: RD %d: rstarted\n", id); // TODO: Replace "A" with action number
+            fprintf(log_file, "%d: RD %d: rstarted\n", action_num, id);
 
             // Child process is done
+            // Critical section - incrementing end processes number
+            sem_wait(end_process_counting_sem);
+            shared_data->ended_processes++;
+            shmdt(shared_data);
+            sem_post(end_process_counting_sem);
+            // END of critical section
+
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
