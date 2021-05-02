@@ -62,6 +62,12 @@ typedef struct shared_data {
     bool workshop_open;
 } shared_data_t;
 
+// PIDs of running child processes
+typedef struct running_processes {
+    int num;    // Number of running processes
+    int pids[]; // PIDs of that processes
+} running_processes_t;
+
 // ID for elves and reindeer
 int id;
 
@@ -112,25 +118,28 @@ void terminate_semaphores(shared_data_t *shared_data);
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id);
+bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes);
 /**
  * Creates elf processes
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id);
+bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes);
 /**
  * Creates reindeer processes
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id);
+bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes);
 
 /**
  * Program for simulating Santa Claus live
@@ -154,11 +163,21 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Allocate memory for storing running processes' PIDs
+    running_processes_t *running_processes;
+    int number_of_processes = (1 + configs.elf_num + configs.reindeer_num);
+    if ((running_processes = malloc(sizeof(running_processes_t) + sizeof(int) * number_of_processes)) == NULL) {
+        printf("Cannot allocate memory for storing running processes' PIDs\n");
+
+        return 1;
+    }
+
     // Open file for logging actions
     FILE *log_file;
     if ((log_file = fopen("proj2.out", "w")) == NULL) {
         printf("Cannot open log file\n");
 
+        free(running_processes);
         return 1;
     }
 
@@ -166,6 +185,7 @@ int main(int argc, char *argv[]) {
     if (setvbuf(log_file, NULL, _IONBF, 0) != 0) {
         printf("Cannot set log file to unbuffered mode\n");
 
+        free(running_processes);
         return 1;
     }
 
@@ -175,6 +195,7 @@ int main(int argc, char *argv[]) {
         printf("Cannot get shared memory\n");
 
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
 
@@ -185,6 +206,7 @@ int main(int argc, char *argv[]) {
 
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
 
@@ -195,41 +217,49 @@ int main(int argc, char *argv[]) {
         shmdt(shared_data);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
 
     // Create needed processes
-    if (!spawn_santa(&configs, log_file, shared_mem_id)) {
+    if (!spawn_santa(&configs, log_file, shared_mem_id, running_processes)) {
         printf("Cannot create process for Santa\n");
 
         terminate_semaphores(shared_data);
         shmdt(shared_data);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
-    if (!spawn_elves(&configs, log_file, shared_mem_id)) {
+    if (!spawn_elves(&configs, log_file, shared_mem_id, running_processes)) {
         printf("Cannot create process for elf\n");
 
-        // Terminate Santa process
-        kill(-1, SIGKILL);
+        // Terminate already run processes
+        for (int i = 0; i < running_processes->num; i++) {
+            kill(running_processes->pids[i], SIGKILL);
+        }
 
         terminate_semaphores(shared_data);
         shmdt(shared_data);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
-    if (!spawn_reindeer(&configs, log_file, shared_mem_id)) {
+    if (!spawn_reindeer(&configs, log_file, shared_mem_id, running_processes)) {
         printf("Cannot create process for reindeer\n");
 
-        // Terminate already created processes
-        kill(-1, SIGKILL);
+        // Terminate already run processes
+        for (int i = 0; i < running_processes->num; i++) {
+            kill(running_processes->pids[i], SIGKILL);
+        }
 
         terminate_semaphores(shared_data);
         shmdt(shared_data);
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
+        free(running_processes);
         return 1;
     }
 
@@ -240,6 +270,7 @@ int main(int argc, char *argv[]) {
     shmdt(shared_data);
     shmctl(shared_mem_id, IPC_RMID, 0);
     fclose(log_file);
+    free(running_processes);
     return 0;
 }
 
@@ -427,15 +458,16 @@ void terminate_semaphores(shared_data_t *shared_data) {
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
+bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes) {
     // Create a new (child) process by dividing the main process into two processes
-    pid_t ppid = fork();
-    if (ppid == -1) {
+    pid_t pid = fork();
+    if (pid == -1) {
         // Error while creating the process (child process hasn't been created)
         return false;
-    } else if (ppid == 0) {
+    } else if (pid == 0) {
         // Process has been successfully created --> this is code for the new (child) process
 
         // Attach shared memory
@@ -514,6 +546,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         exit(0);
     } else {
         // Process has been successfully created --> this is code for original (main) process
+        running_processes->pids[running_processes->num++] = pid;
     }
 
     return true;
@@ -524,16 +557,17 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
+bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes) {
     for (int i = 0; i < configs->elf_num; i++) {
         // Create a new (child) process by dividing the main process into two processes
-        pid_t ppid = fork();
-        if (ppid == -1) {
+        pid_t pid = fork();
+        if (pid == -1) {
             // Error while creating the process (child process hasn't been created)
             return false;
-        } else if (ppid == 0) {
+        } else if (pid == 0) {
             // Process has been successfully created --> this is code for the new (child) process
 
             // Attach shared memory
@@ -617,6 +651,7 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
+            running_processes->pids[running_processes->num++] = pid;
         }
     }
 
@@ -628,16 +663,17 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
  * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
+ * @param running_processes Running processes
  * @return true => success, false => problems with process creating
  */
-bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
+bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id, running_processes_t *running_processes) {
     for (int i = 0; i < configs->reindeer_num; i++) {
         // Create a new (child) process by dividing the main process into two processes
-        pid_t ppid = fork();
-        if (ppid == -1) {
+        pid_t pid = fork();
+        if (pid == -1) {
             // Error while creating the process (child process hasn't been created)
             return false;
-        } else if (ppid == 0) {
+        } else if (pid == 0) {
             // Process has been successfully created --> this is code for the new (child) process
 
             // Attach shared memory
@@ -708,6 +744,7 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
+            running_processes->pids[running_processes->num++] = pid;
         }
     }
 
