@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/shm.h>
 #include <sys/time.h>
+#include <stdarg.h>
 
 // No valid input
 #define BAD_INPUT -1
@@ -73,6 +74,14 @@ int id;
  * @return Parsed input argument or -1 if the argument is not valid
  */
 int parse_input_arg(char *input_arg, int min, int max);
+/**
+ * Logs an action
+ * @param log_file Log file where to write the action to
+ * @param shared_data Shared data (access to shared memory)
+ * @param action Action name with tags (for ex. %d). Action number will be added automatically
+ * @param ... Replacements for tags
+ */
+void log_action(FILE *log_file, shared_data_t *shared_data, const char *action, ...);
 
 // Initialization functions
 /**
@@ -287,6 +296,31 @@ bool load_configurations(configs_t *configs, char **input_args) {
 }
 
 /**
+ * Logs an action
+ * @param log_file Log file where to write the action to
+ * @param shared_data Shared data (access to shared memory)
+ * @param action Action name with tags (for ex. %d). Action number will be added automatically
+ * @param ... Replacements for tags
+ */
+void log_action(FILE *log_file, shared_data_t *shared_data, const char *action, ...) {
+    va_list tag_replacements;
+
+    va_start(tag_replacements, action);
+
+    // Critical section - getting number and write alert into log file
+    sem_wait(&shared_data->numbering_sem);
+    int action_num = ++shared_data->process_num;
+
+    fprintf(log_file, "%d: ", action_num);
+    vfprintf(log_file, action, tag_replacements);
+    fprintf(log_file, "\n");
+    sem_post(&shared_data->numbering_sem);
+    // END of critical section
+
+    va_end(tag_replacements);
+}
+
+/**
  * Prepares all required semaphores
  * Created semaphores can be safely destroyed by terminate_semaphores() function
  * <strong>Caution: After modifying this function the terminate_semaphores() function must be updated</strong>
@@ -459,15 +493,8 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         shared_data->workshop_open = true;
 
         // Santa sleeps until interrupt (see code in next block)
-        int action_num;
         do {
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
-
-            fprintf(log_file, "%d: Santa: going to sleep\n", action_num);
+            log_action(log_file, shared_data, "Santa: going to sleep");
 
             // Sleep until at least 3 elves need help or the last reindeer come home
             sem_wait(&shared_data->wake_santa_sem);
@@ -478,13 +505,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
             } else {
                 // Elves need help
 
-                // Critical section - getting action number
-                sem_wait(&shared_data->numbering_sem);
-                action_num = ++shared_data->process_num;
-                sem_post(&shared_data->numbering_sem);
-                // END of critical section
-
-                fprintf(log_file, "%d: Santa: helping elves\n", action_num);
+                log_action(log_file, shared_data, "Santa: helping elves");
 
                 // Help elves
                 for (int i = 0; i < 3; i++) {
@@ -502,14 +523,8 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
             }
         } while (1);
 
-        // Critical section - getting action number
-        sem_wait(&shared_data->numbering_sem);
-        action_num = ++shared_data->process_num;
-        sem_post(&shared_data->numbering_sem);
-        // END of critical section
-
         // Workshop is closed now, so elves can't get help and should go to holiday
-        fprintf(log_file, "%d: Santa: closing workshop\n", action_num);
+        log_action(log_file, shared_data, "Santa: closing workshop");
         shared_data->workshop_open = false;
 
         // Send waiting elves to holiday
@@ -526,13 +541,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         // Wait for all reindeer are hitched
         sem_wait(&shared_data->all_reindeer_hitched_sem);
 
-        // Critical section - getting action number
-        sem_wait(&shared_data->numbering_sem);
-        action_num = ++shared_data->process_num;
-        sem_post(&shared_data->numbering_sem);
-        // END of critical section
-
-        fprintf(log_file, "%d: Santa: Christmas started\n", action_num);
+        log_action(log_file, shared_data, "Santa: Christmas started");
 
         // Child process is done
         // Critical section - incrementing end processes number
@@ -578,17 +587,11 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
                 return false;
             }
 
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            int action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
-
             // Set identifier
             id = i + 1;
 
             // Notify about start working action
-            fprintf(log_file, "%d: Elf %d: started\n", action_num, id);
+            log_action(log_file, shared_data, "Elf %d: started", id);
 
             // Elf's working
             do {
@@ -602,25 +605,12 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
                 int work_time = rand() % (configs->elf_work + 1);
                 usleep(work_time * 1000); // * 1000 => convert milliseconds to microseconds
 
-                // Critical section - getting action number
-                sem_wait(&shared_data->numbering_sem);
-                action_num = ++shared_data->process_num;
-                sem_post(&shared_data->numbering_sem);
-                // END of critical section
-
-                // Let know individual work is completed and elf need Santa's help
-                fprintf(log_file, "%d: Elf %d: need help\n", action_num, id);
+                log_action(log_file, shared_data, "Elf %d: need help", id);
 
                 if (!shared_data->workshop_open) {
                     // Santa has already started Christmas, so the elf goes to holiday
 
-                    // Critical section - getting action number
-                    sem_wait(&shared_data->numbering_sem);
-                    action_num = ++shared_data->process_num;
-                    sem_post(&shared_data->numbering_sem);
-                    // END of critical section
-
-                    fprintf(log_file, "%d: Elf %d: taking holidays\n", action_num, id);
+                    log_action(log_file, shared_data, "Elf %d: taking holidays", id);
 
                     break;
                 } else {
@@ -645,25 +635,11 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
                     if (shared_data->workshop_open) {
                         // Elf got help from Santa
 
-                        // Critical section - getting action number
-                        sem_wait(&shared_data->numbering_sem);
-                        action_num = ++shared_data->process_num;
-                        sem_post(&shared_data->numbering_sem);
-                        // END of critical section
-
-                        // Let know elf got help
-                        fprintf(log_file, "%d: Elf %d: get help\n", action_num, id);
+                        log_action(log_file, shared_data, "Elf %d: get help", id);
                     } else {
                         // Christmas has started yet, so elf won't get help and must go to holiday
 
-                        // Critical section - getting action number
-                        sem_wait(&shared_data->numbering_sem);
-                        action_num = ++shared_data->process_num;
-                        sem_post(&shared_data->numbering_sem);
-                        // END of critical section
-
-                        // Let know elf got help
-                        fprintf(log_file, "%d: Elf %d: taking holidays\n", action_num, id);
+                        log_action(log_file, shared_data, "Elf %d: taking holidays", id);
                     }
 
                     // Start next individual work...
@@ -715,18 +691,11 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
                 printf("%d\n", shared_mem_id);
                 return false;
             }
-
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            int action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
-
             // Set identifier
             id = i + 1;
 
             // Notify about go to holiday action
-            fprintf(log_file, "%d: RD %d: rstarted\n", action_num, id);
+            log_action(log_file, shared_data, "RD %d: rstarted", id);
 
             // Prepare for randomization - construct seed
             // Seed is constructed from PID of the child process and microseconds of the current time
@@ -738,14 +707,8 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             int holiday_time = (rand() + (configs->reindeer_holiday / 2)) % (configs->reindeer_holiday + 1);
             usleep(holiday_time * 1000); // * 1000 => convert milliseconds to microseconds
 
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
-
             // Let know reindeer is back at home
-            fprintf(log_file, "%d: RD %d: return home\n", action_num, id);
+            log_action(log_file, shared_data, "RD %d: return home", id);
 
             // Increment number of returned reindeer
             sem_wait(&shared_data->reindeer_counting_sem);
@@ -761,13 +724,7 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Wait for the time the reindeer is hitched
             sem_wait(&shared_data->reindeer_hitched_sem);
 
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
-
-            fprintf(log_file, "%d: RD %d: get hitched\n", action_num, id);
+            log_action(log_file, shared_data, "RD %d: get hitched", id);
 
             // Critical section - counting hitched reindeer
             sem_wait(&shared_data->hitched_counting_sem);
