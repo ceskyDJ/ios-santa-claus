@@ -335,114 +335,69 @@ bool prepare_semaphores(shared_data_t *shared_data) {
 
     // Init semaphore for blocking main process until all child processes are done
     if ((sem_init(&shared_data->main_barrier_sem, 1, 0)) == -1) {
-        // Numbering semaphore is already created, it needs to be destroyed
-        sem_destroy(&shared_data->numbering_sem);
+        // Previous semaphores are already created, they need to be destroyed
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for counting ended processes
     if ((sem_init(&shared_data->end_process_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for counting reindeer at home
     if ((sem_init(&shared_data->reindeer_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for blocking Santa from waking up
     if ((sem_init(&shared_data->wake_santa_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for blocking reindeer until its hitched 
     if ((sem_init(&shared_data->reindeer_hitched_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for blocking Santa to start Christmas
     if ((sem_init(&shared_data->all_reindeer_hitched_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for counting hitched reindeer
     if ((sem_init(&shared_data->hitched_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->all_reindeer_hitched_sem);
-        sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     // Init semaphore for counting elves waiting for help
     if ((sem_init(&shared_data->elf_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->hitched_counting_sem);
-        sem_destroy(&shared_data->all_reindeer_hitched_sem);
-        sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     if ((sem_init(&shared_data->elf_got_help_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->elf_counting_sem);
-        sem_destroy(&shared_data->hitched_counting_sem);
-        sem_destroy(&shared_data->all_reindeer_hitched_sem);
-        sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
         return false;
     }
 
     if ((sem_init(&shared_data->workshop_empty_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->elf_got_help_sem);
-        sem_destroy(&shared_data->elf_counting_sem);
-        sem_destroy(&shared_data->hitched_counting_sem);
-        sem_destroy(&shared_data->all_reindeer_hitched_sem);
-        sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->wake_santa_sem);
-        sem_destroy(&shared_data->reindeer_counting_sem);
-        sem_destroy(&shared_data->end_process_counting_sem);
-        sem_destroy(&shared_data->main_barrier_sem);
-        sem_destroy(&shared_data->numbering_sem);
+        terminate_semaphores(shared_data);
     }
 
     return true;
