@@ -25,6 +25,7 @@ typedef struct configs {
 typedef struct shared_data {
     int process_num;        // Number of created (child) processes
     int ended_processes;    // Number of ended (done) child processes
+    int reindeer_home_num;  // Number of reindeer at home (back from holiday)
 } shared_data_t;
 
 // ID for elves and reindeer
@@ -36,7 +37,12 @@ sem_t *main_barrier_sem;
 sem_t *end_process_counting_sem;
 // Semaphore for process numbering critical section (manipulating with process_num in shared_data)
 sem_t *numbering_sem;
+// Semaphore for counting reindeer critical section (manipulating with reindeer_home_num in shared_data)
+sem_t *reindeer_counting_sem;
+// Semaphore for creating barrier for Christmas start - Santa must wait for all reindeer are at home
+sem_t *xmas_barrier_sem;
 
+// Help functions
 /**
  * Parses provided input argument
  * @param input_arg Input argument to parse
@@ -45,14 +51,6 @@ sem_t *numbering_sem;
  * @return Parsed input argument or -1 if the argument is not valid
  */
 int parse_input_arg(char *input_arg, int min, int max);
-/**
- * Loads configurations from input arguments
- * @param configs Pointer to the structure to fill with loaded configurations
- * @param input_args Array of input arguments
- * @return true => success, false => problems with input arguments
- */
-bool load_configurations(configs_t *configs, char **input_args);
-
 /**
  * Creates unnamed semaphore
  * @param init_value Initial value of the semaphore
@@ -65,13 +63,37 @@ sem_t *create_semaphore(int init_value);
  */
 void destroy_semaphore(sem_t *semaphore);
 
+// Initialization functions
+/**
+ * Loads configurations from input arguments
+ * @param configs Pointer to the structure to fill with loaded configurations
+ * @param input_args Array of input arguments
+ * @return true => success, false => problems with input arguments
+ */
+bool load_configurations(configs_t *configs, char **input_args);
+/**
+ * Prepares all required semaphores
+ * Created semaphores can be safely destroyed by terminate_semaphores() function
+ * <strong>Side effects: Modifies *_sem global variables</strong>
+ * <strong>Caution: After modifying this function the terminate_semaphores() function must be updated</strong>
+ * @return 0 => success, 1 => error while creating one of the semaphores
+ */
+bool prepare_semaphores();
+/**
+ * Destroys all semaphores created by prepare_semaphores() function
+ * <strong>Caution: It needs to be updated after adding a new semaphore into prepare_semaphore()</strong>
+ */
+void terminate_semaphores();
+
+// Work with child processes
 /**
  * Creates Santa process
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(FILE *log_file, int shared_mem_id);
+bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id);
 /**
  * Creates elf processes
  * @param configs Process configurations
@@ -135,40 +157,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Init semaphore for process numbering
-    if ((numbering_sem = create_semaphore(1)) == NULL) {
-        printf("Cannot create numbering semaphore\n");
+    // Prepare semaphores
+    if (!prepare_semaphores()) {
+        printf("Cannot create one of the semaphores\n");
 
-        fclose(log_file);
-        return 1;
-    }
-
-    // Init semaphore for blocking main process until all child processes are done
-    if ((main_barrier_sem = create_semaphore(1)) == NULL) {
-        printf("Cannot create main barrier semaphore\n");
-
-        destroy_semaphore(numbering_sem);
-        fclose(log_file);
-        return 1;
-    }
-
-    // Init semaphore for counting ended processes
-    if ((end_process_counting_sem = create_semaphore(0)) == NULL) {
-        printf("Cannot create process counting semaphore\n");
-
-        destroy_semaphore(main_barrier_sem);
-        destroy_semaphore(numbering_sem);
+        shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
     }
 
     // Create needed processes
-    if (!spawn_santa(log_file, shared_mem_id)) {
+    if (!spawn_santa(&configs, log_file, shared_mem_id)) {
         printf("Cannot create process for Santa\n");
 
-        destroy_semaphore(end_process_counting_sem);
-        destroy_semaphore(main_barrier_sem);
-        destroy_semaphore(numbering_sem);
+        terminate_semaphores();
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
@@ -179,9 +181,7 @@ int main(int argc, char *argv[]) {
         // Terminate Santa process
         kill(-1, SIGKILL);
 
-        destroy_semaphore(end_process_counting_sem);
-        destroy_semaphore(main_barrier_sem);
-        destroy_semaphore(numbering_sem);
+        terminate_semaphores();
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
@@ -192,41 +192,30 @@ int main(int argc, char *argv[]) {
         // Terminate already created processes
         kill(-1, SIGKILL);
 
-        destroy_semaphore(end_process_counting_sem);
-        destroy_semaphore(main_barrier_sem);
-        destroy_semaphore(numbering_sem);
+        terminate_semaphores();
         shmctl(shared_mem_id, IPC_RMID, 0);
         fclose(log_file);
         return 1;
     }
 
     // Attach shared memory
-    shared_data_t *shared_data;
-    if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
-        printf("Cannot attach shared memory\n");
-
-        // Terminate created processes
-        kill(-1, SIGKILL);
-
-        destroy_semaphore(end_process_counting_sem);
-        destroy_semaphore(main_barrier_sem);
-        destroy_semaphore(numbering_sem);
-        shmctl(shared_mem_id, IPC_RMID, 0);
-        fclose(log_file);
-        return 1;
-    }
+//    shared_data_t *shared_data;
+//    if ((shared_data = shmat(shared_mem_id, NULL, 0)) == (void *)-1) {
+//        printf("Cannot attach shared memory\n");
+//
+//         Terminate created processes
+//        kill(-1, SIGKILL);
+//
+//        terminate_semaphores();
+//        shmctl(shared_mem_id, IPC_RMID, 0);
+//        fclose(log_file);
+//        return 1;
+//    }
 
     // Main process can end only if all child processes have ended
-    if (shared_data->ended_processes == (1 + configs.elf_num + configs.reindeer_num)) {
-        sem_post(main_barrier_sem);
-    }
-
     sem_wait(main_barrier_sem);
-    sem_post(main_barrier_sem);
 
-    destroy_semaphore(end_process_counting_sem);
-    destroy_semaphore(main_barrier_sem);
-    destroy_semaphore(numbering_sem);
+    terminate_semaphores();
     shmctl(shared_mem_id, IPC_RMID, 0);
     fclose(log_file);
     return 0;
@@ -262,29 +251,6 @@ int parse_input_arg(char *input_arg, int min, int max) {
 }
 
 /**
- * Loads configurations from input arguments
- * @param configs Pointer to the structure to fill with loaded configurations
- * @param input_args Array of input arguments
- * @return true => success, false => problems with input arguments
- */
-bool load_configurations(configs_t *configs, char **input_args) {
-    if ((configs->elf_num = parse_input_arg(input_args[1], 1, 1000)) == BAD_INPUT) {
-        return false;
-    }
-    if ((configs->reindeer_num = parse_input_arg(input_args[2], 1, 19)) == BAD_INPUT) {
-        return false;
-    }
-    if ((configs->elf_work = parse_input_arg(input_args[3], 0, 1000)) == BAD_INPUT) {
-        return false;
-    }
-    if ((configs->reindeer_holiday = parse_input_arg(input_args[4], 0, 1000)) == BAD_INPUT) {
-        return false;
-    }
-
-    return true;
-}
-
-/**
  * Creates unnamed semaphore
  * @param init_value Initial value of the semaphore
  * @return Pointer to the created semaphore or NULL => memory error or init error
@@ -314,12 +280,100 @@ void destroy_semaphore(sem_t *semaphore) {
 }
 
 /**
+ * Loads configurations from input arguments
+ * @param configs Pointer to the structure to fill with loaded configurations
+ * @param input_args Array of input arguments
+ * @return true => success, false => problems with input arguments
+ */
+bool load_configurations(configs_t *configs, char **input_args) {
+    if ((configs->elf_num = parse_input_arg(input_args[1], 1, 1000)) == BAD_INPUT) {
+        return false;
+    }
+    if ((configs->reindeer_num = parse_input_arg(input_args[2], 1, 19)) == BAD_INPUT) {
+        return false;
+    }
+    if ((configs->elf_work = parse_input_arg(input_args[3], 0, 1000)) == BAD_INPUT) {
+        return false;
+    }
+    if ((configs->reindeer_holiday = parse_input_arg(input_args[4], 0, 1000)) == BAD_INPUT) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Prepares all required semaphores
+ * Created semaphores can be safely destroyed by terminate_semaphores() function
+ * <strong>Side effects: Modifies *_sem global variables</strong>
+ * <strong>Caution: After modifying this function the terminate_semaphores() function must be updated</strong>
+ * @return 0 => success, 1 => error while creating one of the semaphores
+ */
+bool prepare_semaphores() {
+    // Init semaphore for process numbering
+    if ((numbering_sem = create_semaphore(1)) == NULL) {
+        return false;
+    }
+
+    // Init semaphore for blocking main process until all child processes are done
+    if ((main_barrier_sem = create_semaphore(0)) == NULL) {
+        // Numbering semaphore is already created, it needs to be destroyed
+        destroy_semaphore(numbering_sem);
+        return false;
+    }
+
+    // Init semaphore for counting ended processes
+    if ((end_process_counting_sem = create_semaphore(0)) == NULL) {
+        // Previous semaphores are already created, they need to be destroyed
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
+        return false;
+    }
+
+    // Init semaphore for counting reindeer at home
+    if ((reindeer_counting_sem = create_semaphore(1)) == NULL) {
+        // Previous semaphores are already created, they need to be destroyed
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
+        return false;
+    }
+
+    // Init semaphore for blocking Santa to start X-mas
+    if ((xmas_barrier_sem = create_semaphore(0)) == NULL) {
+        // Previous semaphores are already created, they need to be destroyed
+        destroy_semaphore(reindeer_counting_sem);
+        destroy_semaphore(end_process_counting_sem);
+        destroy_semaphore(main_barrier_sem);
+        destroy_semaphore(numbering_sem);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Destroys all semaphores created by prepare_semaphores() function
+ * <strong>Caution: It needs to be updated after adding a new semaphore into prepare_semaphore()</strong>
+ */
+void terminate_semaphores() {
+    destroy_semaphore(numbering_sem);
+    destroy_semaphore(main_barrier_sem);
+    destroy_semaphore(end_process_counting_sem);
+    destroy_semaphore(reindeer_counting_sem);
+    destroy_semaphore(xmas_barrier_sem);
+}
+
+/**
  * Creates Santa process
+ * @param configs Process configurations
  * @param log_file Log file where every action is logged to
  * @param shared_mem_id Identification of shared memory block
  * @return true => success, false => problems with process creating
  */
-bool spawn_santa(FILE *log_file, int shared_mem_id) {
+bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
+    (void)configs; // TODO: remove
+
     // Create a new (child) process by dividing the main process into two processes
     pid_t ppid = fork();
     if (ppid == -1) {
@@ -342,6 +396,17 @@ bool spawn_santa(FILE *log_file, int shared_mem_id) {
 
         fprintf(log_file, "%d: Santa: going to sleep\n", action_num);
 
+        // Waiting for all reindeer are at home to start X-mas
+        sem_wait(xmas_barrier_sem);
+
+        // Critical section - getting action number
+        sem_wait(numbering_sem);
+        action_num = ++shared_data->process_num;
+        sem_post(numbering_sem);
+        // END of critical section
+
+        fprintf(log_file, "%d: Santa: Christmas started\n", action_num);
+
         // Child process is done
         // Critical section - incrementing end processes number
         sem_wait(end_process_counting_sem);
@@ -349,6 +414,11 @@ bool spawn_santa(FILE *log_file, int shared_mem_id) {
         shmdt(shared_data);
         sem_post(end_process_counting_sem);
         // END of critical section
+
+        // Allow main process to exit
+        if (shared_data->ended_processes == (1 + configs->elf_num + configs->reindeer_num)) {
+            sem_post(main_barrier_sem);
+        }
 
         exit(0);
     } else {
@@ -420,6 +490,11 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
             sem_post(end_process_counting_sem);
             // END of critical section
 
+            // Allow main process to exit
+            if (shared_data->ended_processes == (1 + configs->elf_num + configs->reindeer_num)) {
+                sem_post(main_barrier_sem);
+            }
+
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
@@ -484,6 +559,17 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Let know reindeer is back at home
             fprintf(log_file, "%d: RD %d: return home\n", action_num, id);
 
+            // Increment number of returned reindeer
+            sem_wait(reindeer_counting_sem);
+            shared_data->reindeer_home_num++;
+            sem_post(reindeer_counting_sem);
+
+            // Waiting for all reindeer are at home to start Christmas
+            // The last-returned reindeer unlocks X-mas barrier and Santa will start Christmas
+            if (shared_data->reindeer_home_num == configs->reindeer_num) {
+                sem_post(xmas_barrier_sem);
+            }
+
             // Child process is done
             // Critical section - incrementing end processes number
             sem_wait(end_process_counting_sem);
@@ -491,6 +577,11 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             shmdt(shared_data);
             sem_post(end_process_counting_sem);
             // END of critical section
+
+            // Allow main process to exit
+            if (shared_data->ended_processes == (1 + configs->elf_num + configs->reindeer_num)) {
+                sem_post(main_barrier_sem);
+            }
 
             exit(0);
         } else {
