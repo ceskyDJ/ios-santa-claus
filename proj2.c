@@ -288,7 +288,7 @@ bool prepare_semaphores(shared_data_t *shared_data) {
     }
 
     // Init semaphore for counting ended processes
-    if ((sem_init(&shared_data->end_process_counting_sem, 1, 0)) == -1) {
+    if ((sem_init(&shared_data->end_process_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->main_barrier_sem);
         sem_destroy(&shared_data->numbering_sem);
@@ -375,7 +375,6 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         // Critical section - incrementing end processes number
         sem_wait(&shared_data->end_process_counting_sem);
         shared_data->ended_processes++;
-        shmdt(shared_data);
         sem_post(&shared_data->end_process_counting_sem);
         // END of critical section
 
@@ -384,6 +383,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
             sem_post(&shared_data->main_barrier_sem);
         }
 
+        shmdt(shared_data);
         exit(0);
     } else {
         // Process has been successfully created --> this is code for original (main) process
@@ -450,7 +450,6 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Critical section - incrementing end processes number
             sem_wait(&shared_data->end_process_counting_sem);
             shared_data->ended_processes++;
-            shmdt(shared_data);
             sem_post(&shared_data->end_process_counting_sem);
             // END of critical section
 
@@ -459,6 +458,7 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
                 sem_post(&shared_data->main_barrier_sem);
             }
 
+            shmdt(shared_data);
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
@@ -539,7 +539,6 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Critical section - incrementing end processes number
             sem_wait(&shared_data->end_process_counting_sem);
             shared_data->ended_processes++;
-            shmdt(shared_data);
             sem_post(&shared_data->end_process_counting_sem);
             // END of critical section
 
@@ -548,6 +547,7 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
                 sem_post(&shared_data->main_barrier_sem);
             }
 
+            shmdt(shared_data);
             exit(0);
         } else {
             // Process has been successfully created --> this is code for original (main) process
