@@ -276,19 +276,19 @@ bool load_configurations(configs_t *configs, char **input_args) {
  */
 bool prepare_semaphores(shared_data_t *shared_data) {
     // Init semaphore for process numbering
-    if ((sem_init(&shared_data->numbering_sem, 0, 1)) == -1) {
+    if ((sem_init(&shared_data->numbering_sem, 1, 1)) == -1) {
         return false;
     }
 
     // Init semaphore for blocking main process until all child processes are done
-    if ((sem_init(&shared_data->main_barrier_sem, 0, 0)) == -1) {
+    if ((sem_init(&shared_data->main_barrier_sem, 1, 0)) == -1) {
         // Numbering semaphore is already created, it needs to be destroyed
         sem_destroy(&shared_data->numbering_sem);
         return false;
     }
 
     // Init semaphore for counting ended processes
-    if ((sem_init(&shared_data->end_process_counting_sem, 0, 0)) == -1) {
+    if ((sem_init(&shared_data->end_process_counting_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->main_barrier_sem);
         sem_destroy(&shared_data->numbering_sem);
@@ -296,7 +296,7 @@ bool prepare_semaphores(shared_data_t *shared_data) {
     }
 
     // Init semaphore for counting reindeer at home
-    if ((sem_init(&shared_data->reindeer_counting_sem, 0, 1)) == -1) {
+    if ((sem_init(&shared_data->reindeer_counting_sem, 1, 1)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->end_process_counting_sem);
         sem_destroy(&shared_data->main_barrier_sem);
@@ -305,7 +305,7 @@ bool prepare_semaphores(shared_data_t *shared_data) {
     }
 
     // Init semaphore for blocking Santa to start X-mas
-    if ((sem_init(&shared_data->xmas_barrier_sem, 0, 0)) == -1) {
+    if ((sem_init(&shared_data->xmas_barrier_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->reindeer_counting_sem);
         sem_destroy(&shared_data->end_process_counting_sem);
