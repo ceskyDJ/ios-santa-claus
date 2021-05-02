@@ -600,7 +600,6 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                     // Santa has already started Christmas, so the elf goes to holiday
 
                     log_action(log_file, shared_data, "Elf %d: taking holidays", id);
-
                     break;
                 } else {
                     // Critical section - counting elves waiting for help
@@ -629,6 +628,7 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                         // Christmas has started yet, so elf won't get help and must go to holiday
 
                         log_action(log_file, shared_data, "Elf %d: taking holidays", id);
+                        break;
                     }
 
                     // Start next individual work...
