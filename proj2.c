@@ -31,14 +31,21 @@ typedef struct shared_data {
     sem_t numbering_sem;
     // Semaphore for counting reindeer critical section (manipulating with reindeer_home_num in shared_data)
     sem_t reindeer_counting_sem;
-    // Semaphore for blocking Santa from hitching reindeer until all of them are at home
-    sem_t all_reindeer_home_sem;
+    // Semaphore for blocking Santa from waking up
+    // Santa is woken up when all of reindeer are at home or at least 3 elves need help
+    sem_t wake_santa_sem;
     // Semaphore for blocking reindeer before they are hitched
     sem_t reindeer_hitched_sem;
     // Semaphore for blocking Santa from starting Christmas until all of reindeer are hitched
     sem_t all_reindeer_hitched_sem;
     // Semaphore for counting hitched reindeer (manipulating with reindeer_hitched_num in shared_data)
     sem_t hitched_counting_sem;
+    // Semaphore for counting elves which need to help (manipulating with elf_need_help_num in shared_data)
+    sem_t elf_counting_sem;
+    // Semaphore for blocking elf until it get help from Santa
+    sem_t elf_got_help_sem;
+    // Semaphore for blocking elves from entering workshop, when its not empty
+    sem_t workshop_empty_sem;
 
     // Number of created (child) processes
     int process_num;
@@ -48,6 +55,8 @@ typedef struct shared_data {
     int reindeer_home_num;
     // Number of hitched reindeer
     int reindeer_hitched_num;
+    // Number of elves which ask for help
+    int elf_need_help_num;
     // Is Santa's workshop opened?
     bool workshop_open;
 } shared_data_t;
@@ -153,7 +162,7 @@ int main(int argc, char *argv[]) {
 
     // Prepare shared memory
     int shared_mem_id;
-    if ((shared_mem_id = shmget(IPC_PRIVATE, sizeof(shared_data_t), 0644 | IPC_CREAT)) == -1) {
+    if ((shared_mem_id = shmget(IPC_PRIVATE, sizeof(shared_data_t), 0600 | IPC_CREAT)) == -1) {
         printf("Cannot get shared memory\n");
 
         fclose(log_file);
@@ -314,8 +323,8 @@ bool prepare_semaphores(shared_data_t *shared_data) {
         return false;
     }
 
-    // Init semaphore for blocking Santa to start hitching reindeer
-    if ((sem_init(&shared_data->all_reindeer_home_sem, 1, 0)) == -1) {
+    // Init semaphore for blocking Santa from waking up
+    if ((sem_init(&shared_data->wake_santa_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->reindeer_counting_sem);
         sem_destroy(&shared_data->end_process_counting_sem);
@@ -327,7 +336,7 @@ bool prepare_semaphores(shared_data_t *shared_data) {
     // Init semaphore for blocking reindeer until its hitched 
     if ((sem_init(&shared_data->reindeer_hitched_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
-        sem_destroy(&shared_data->all_reindeer_home_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
         sem_destroy(&shared_data->reindeer_counting_sem);
         sem_destroy(&shared_data->end_process_counting_sem);
         sem_destroy(&shared_data->main_barrier_sem);
@@ -339,7 +348,7 @@ bool prepare_semaphores(shared_data_t *shared_data) {
     if ((sem_init(&shared_data->all_reindeer_hitched_sem, 1, 0)) == -1) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->all_reindeer_home_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
         sem_destroy(&shared_data->reindeer_counting_sem);
         sem_destroy(&shared_data->end_process_counting_sem);
         sem_destroy(&shared_data->main_barrier_sem);
@@ -352,14 +361,56 @@ bool prepare_semaphores(shared_data_t *shared_data) {
         // Previous semaphores are already created, they need to be destroyed
         sem_destroy(&shared_data->all_reindeer_hitched_sem);
         sem_destroy(&shared_data->reindeer_hitched_sem);
-        sem_destroy(&shared_data->all_reindeer_home_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
         sem_destroy(&shared_data->reindeer_counting_sem);
         sem_destroy(&shared_data->end_process_counting_sem);
         sem_destroy(&shared_data->main_barrier_sem);
         sem_destroy(&shared_data->numbering_sem);
         return false;
     }
-    
+
+    // Init semaphore for counting elves waiting for help
+    if ((sem_init(&shared_data->elf_counting_sem, 1, 1)) == -1) {
+        // Previous semaphores are already created, they need to be destroyed
+        sem_destroy(&shared_data->hitched_counting_sem);
+        sem_destroy(&shared_data->all_reindeer_hitched_sem);
+        sem_destroy(&shared_data->reindeer_hitched_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
+        sem_destroy(&shared_data->reindeer_counting_sem);
+        sem_destroy(&shared_data->end_process_counting_sem);
+        sem_destroy(&shared_data->main_barrier_sem);
+        sem_destroy(&shared_data->numbering_sem);
+        return false;
+    }
+
+    if ((sem_init(&shared_data->elf_got_help_sem, 1, 0)) == -1) {
+        // Previous semaphores are already created, they need to be destroyed
+        sem_destroy(&shared_data->elf_counting_sem);
+        sem_destroy(&shared_data->hitched_counting_sem);
+        sem_destroy(&shared_data->all_reindeer_hitched_sem);
+        sem_destroy(&shared_data->reindeer_hitched_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
+        sem_destroy(&shared_data->reindeer_counting_sem);
+        sem_destroy(&shared_data->end_process_counting_sem);
+        sem_destroy(&shared_data->main_barrier_sem);
+        sem_destroy(&shared_data->numbering_sem);
+        return false;
+    }
+
+    if ((sem_init(&shared_data->workshop_empty_sem, 1, 1)) == -1) {
+        // Previous semaphores are already created, they need to be destroyed
+        sem_destroy(&shared_data->elf_got_help_sem);
+        sem_destroy(&shared_data->elf_counting_sem);
+        sem_destroy(&shared_data->hitched_counting_sem);
+        sem_destroy(&shared_data->all_reindeer_hitched_sem);
+        sem_destroy(&shared_data->reindeer_hitched_sem);
+        sem_destroy(&shared_data->wake_santa_sem);
+        sem_destroy(&shared_data->reindeer_counting_sem);
+        sem_destroy(&shared_data->end_process_counting_sem);
+        sem_destroy(&shared_data->main_barrier_sem);
+        sem_destroy(&shared_data->numbering_sem);
+    }
+
     return true;
 }
 
@@ -373,10 +424,13 @@ void terminate_semaphores(shared_data_t *shared_data) {
     sem_destroy(&shared_data->main_barrier_sem);
     sem_destroy(&shared_data->end_process_counting_sem);
     sem_destroy(&shared_data->reindeer_counting_sem);
-    sem_destroy(&shared_data->all_reindeer_home_sem);
+    sem_destroy(&shared_data->wake_santa_sem);
     sem_destroy(&shared_data->reindeer_hitched_sem);
     sem_destroy(&shared_data->all_reindeer_hitched_sem);
     sem_destroy(&shared_data->hitched_counting_sem);
+    sem_destroy(&shared_data->elf_counting_sem);
+    sem_destroy(&shared_data->elf_got_help_sem);
+    sem_destroy(&shared_data->workshop_empty_sem);
 }
 
 /**
@@ -404,16 +458,49 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         // Workshop is opened, so elves can get help there
         shared_data->workshop_open = true;
 
-        // Critical section - getting action number
-        sem_wait(&shared_data->numbering_sem);
-        int action_num = ++shared_data->process_num;
-        sem_post(&shared_data->numbering_sem);
-        // END of critical section
+        // Santa sleeps until interrupt (see code in next block)
+        int action_num;
+        do {
+            // Critical section - getting action number
+            sem_wait(&shared_data->numbering_sem);
+            action_num = ++shared_data->process_num;
+            sem_post(&shared_data->numbering_sem);
+            // END of critical section
 
-        fprintf(log_file, "%d: Santa: going to sleep\n", action_num);
+            fprintf(log_file, "%d: Santa: going to sleep\n", action_num);
 
-        // Waiting for all reindeer are at home to start X-mas
-        sem_wait(&shared_data->all_reindeer_home_sem);
+            // Sleep until at least 3 elves need help or the last reindeer come home
+            sem_wait(&shared_data->wake_santa_sem);
+            if (shared_data->reindeer_home_num == configs->reindeer_num) {
+                // All reindeer are at home --> let's hitch them
+                // After that Christmas will be started, so elves are without Santa's help from now
+                break;
+            } else {
+                // Elves need help
+
+                // Critical section - getting action number
+                sem_wait(&shared_data->numbering_sem);
+                action_num = ++shared_data->process_num;
+                sem_post(&shared_data->numbering_sem);
+                // END of critical section
+
+                fprintf(log_file, "%d: Santa: helping elves\n", action_num);
+
+                // Help elves
+                for (int i = 0; i < 3; i++) {
+                    sem_post(&shared_data->elf_got_help_sem);
+                }
+
+                // Critical section - decrease number of elves waiting for help by 3 (Santa has helped them yet)
+                sem_wait(&shared_data->elf_counting_sem);
+                shared_data->elf_need_help_num -= 3;
+                sem_post(&shared_data->elf_counting_sem);
+                // END of critical section
+
+                // Workshop is empty now
+                sem_post(&shared_data->workshop_empty_sem);
+            }
+        } while (1);
 
         // Critical section - getting action number
         sem_wait(&shared_data->numbering_sem);
@@ -424,6 +511,12 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id) {
         // Workshop is closed now, so elves can't get help and should go to holiday
         fprintf(log_file, "%d: Santa: closing workshop\n", action_num);
         shared_data->workshop_open = false;
+
+        // Send waiting elves to holiday
+        // Some of elves aren't at holiday right now and didn't see the info sign at the workshop says "closed"
+        for (int i = 0; i < shared_data->elf_need_help_num; i++) {
+            sem_post(&shared_data->elf_got_help_sem);
+        }
 
         // Hitch reindeer
         for (int i = 0; i < configs->reindeer_num; i++) {
@@ -497,24 +590,85 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id) {
             // Notify about start working action
             fprintf(log_file, "%d: Elf %d: started\n", action_num, id);
 
-            // Prepare for randomization - construct seed
-            // Seed is constructed from PID of the child process and microseconds of the current time
-            struct timeval current_time;
-            gettimeofday(&current_time, NULL);
-            srand(getpid() + current_time.tv_usec);
+            // Elf's working
+            do {
+                // Prepare for randomization - construct seed
+                // Seed is constructed from PID of the child process and microseconds of the current time
+                struct timeval current_time;
+                gettimeofday(&current_time, NULL);
+                srand(getpid() + current_time.tv_usec);
 
-            // Simulate individual working for a pseudorandom time
-            int work_time = rand() % (configs->elf_work + 1);
-            usleep(work_time * 1000); // * 1000 => convert milliseconds to microseconds
+                // Simulate individual working for a pseudorandom time
+                int work_time = rand() % (configs->elf_work + 1);
+                usleep(work_time * 1000); // * 1000 => convert milliseconds to microseconds
 
-            // Critical section - getting action number
-            sem_wait(&shared_data->numbering_sem);
-            action_num = ++shared_data->process_num;
-            sem_post(&shared_data->numbering_sem);
-            // END of critical section
+                // Critical section - getting action number
+                sem_wait(&shared_data->numbering_sem);
+                action_num = ++shared_data->process_num;
+                sem_post(&shared_data->numbering_sem);
+                // END of critical section
 
-            // Let know individual work is completed and elf need Santa's help
-            fprintf(log_file, "%d: Elf %d: need help\n", action_num, id);
+                // Let know individual work is completed and elf need Santa's help
+                fprintf(log_file, "%d: Elf %d: need help\n", action_num, id);
+
+                if (!shared_data->workshop_open) {
+                    // Santa has already started Christmas, so the elf goes to holiday
+
+                    // Critical section - getting action number
+                    sem_wait(&shared_data->numbering_sem);
+                    action_num = ++shared_data->process_num;
+                    sem_post(&shared_data->numbering_sem);
+                    // END of critical section
+
+                    fprintf(log_file, "%d: Elf %d: taking holidays\n", action_num, id);
+
+                    break;
+                } else {
+                    // Critical section - counting elves waiting for help
+                    sem_wait(&shared_data->elf_counting_sem);
+                    shared_data->elf_need_help_num++;
+                    sem_post(&shared_data->elf_counting_sem);
+                    // END of critical section
+
+                    // Wake up Santa if elf is the 3rd in the queue
+                    if (shared_data->elf_need_help_num >= 3) {
+                        // Waiting for open workshop
+                        sem_wait(&shared_data->workshop_empty_sem);
+
+                        // Wake up Santa
+                        sem_post(&shared_data->wake_santa_sem);
+                    }
+
+                    // Wait for Santa's help
+                    sem_wait(&shared_data->elf_got_help_sem);
+
+                    if (shared_data->workshop_open) {
+                        // Elf got help from Santa
+
+                        // Critical section - getting action number
+                        sem_wait(&shared_data->numbering_sem);
+                        action_num = ++shared_data->process_num;
+                        sem_post(&shared_data->numbering_sem);
+                        // END of critical section
+
+                        // Let know elf got help
+                        fprintf(log_file, "%d: Elf %d: get help\n", action_num, id);
+                    } else {
+                        // Christmas has started yet, so elf won't get help and must go to holiday
+
+                        // Critical section - getting action number
+                        sem_wait(&shared_data->numbering_sem);
+                        action_num = ++shared_data->process_num;
+                        sem_post(&shared_data->numbering_sem);
+                        // END of critical section
+
+                        // Let know elf got help
+                        fprintf(log_file, "%d: Elf %d: taking holidays\n", action_num, id);
+                    }
+
+                    // Start next individual work...
+                }
+            } while (1);
 
             // Child process is done
             // Critical section - incrementing end processes number
@@ -599,9 +753,9 @@ bool spawn_reindeer(configs_t *configs, FILE *log_file, int shared_mem_id) {
             sem_post(&shared_data->reindeer_counting_sem);
 
             // Waiting for all reindeer are at home to start Christmas
-            // The last-returned reindeer unlocks X-mas barrier and Santa will start Christmas
+            // The last-returned reindeer wakes Santa up and he can start hitching reindeer
             if (shared_data->reindeer_home_num == configs->reindeer_num) {
-                sem_post(&shared_data->all_reindeer_home_sem);
+                sem_post(&shared_data->wake_santa_sem);
             }
 
             // Wait for the time the reindeer is hitched
