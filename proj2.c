@@ -47,6 +47,8 @@ typedef struct shared_data {
     sem_t elf_got_help_sem;
     // Semaphore for blocking elves from entering workshop, when its not empty
     sem_t workshop_empty_sem;
+    // Semaphore for blocking santa until all elves in the workshop get help
+    sem_t elf_help_done_sem;
 
     // Number of created (child) processes
     int process_num;
@@ -220,6 +222,9 @@ int main(int argc, char *argv[]) {
         free(running_processes);
         return 1;
     }
+
+    // Workshop is opened, so elves can get help there
+    shared_data->workshop_open = true;
 
     // Create needed processes
     if (!spawn_santa(&configs, log_file, shared_mem_id, running_processes)) {
@@ -431,6 +436,11 @@ bool prepare_semaphores(shared_data_t *shared_data) {
         terminate_semaphores(shared_data);
     }
 
+    if ((sem_init(&shared_data->elf_help_done_sem, 1, 0)) == -1) {
+        // Previous semaphores are already created, they need to be destroyed
+        terminate_semaphores(shared_data);
+    }
+
     return true;
 }
 
@@ -451,6 +461,7 @@ void terminate_semaphores(shared_data_t *shared_data) {
     sem_destroy(&shared_data->elf_counting_sem);
     sem_destroy(&shared_data->elf_got_help_sem);
     sem_destroy(&shared_data->workshop_empty_sem);
+    sem_destroy(&shared_data->elf_help_done_sem);
 }
 
 /**
@@ -476,9 +487,6 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id, running_
             return false;
         }
 
-        // Workshop is opened, so elves can get help there
-        shared_data->workshop_open = true;
-
         // Santa sleeps until interrupt (see code in next block)
         do {
             log_action(log_file, shared_data, "Santa: going to sleep");
@@ -497,6 +505,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                 // Help elves
                 for (int i = 0; i < 3; i++) {
                     sem_post(&shared_data->elf_got_help_sem);
+                    sem_wait(&shared_data->elf_help_done_sem);
                 }
 
                 // Critical section - decrease number of elves waiting for help by 3 (Santa has helped them yet)
@@ -517,6 +526,7 @@ bool spawn_santa(configs_t *configs, FILE *log_file, int shared_mem_id, running_
         // Send waiting elves to holiday
         // Some of elves aren't at holiday right now and didn't see the info sign at the workshop says "closed"
         for (int i = 0; i < shared_data->elf_need_help_num; i++) {
+            sem_post(&shared_data->workshop_empty_sem);
             sem_post(&shared_data->elf_got_help_sem);
         }
 
@@ -613,6 +623,12 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                         // Waiting for open workshop
                         sem_wait(&shared_data->workshop_empty_sem);
 
+                        // Workshop won't be opened --> Santa is hitching reindeer and Christmas will start in a while
+                        if (!shared_data->workshop_open) {
+                            log_action(log_file, shared_data, "Elf %d: taking holidays", id);
+                            break;
+                        }
+
                         // Wake up Santa
                         sem_post(&shared_data->wake_santa_sem);
                     }
@@ -624,6 +640,7 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                         // Elf got help from Santa
 
                         log_action(log_file, shared_data, "Elf %d: get help", id);
+                        sem_post(&shared_data->elf_help_done_sem);
                     } else {
                         // Christmas has started yet, so elf won't get help and must go to holiday
 
