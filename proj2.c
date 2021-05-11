@@ -619,7 +619,7 @@ bool spawn_elves(configs_t *configs, FILE *log_file, int shared_mem_id, running_
                     // END of critical section
 
                     // Wake up Santa if elf is the 3rd in the queue
-                    if (shared_data->elf_need_help_num >= 3) {
+                    if (shared_data->elf_need_help_num % 3 == 0) {
                         // Waiting for open workshop
                         sem_wait(&shared_data->workshop_empty_sem);
 
